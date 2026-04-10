@@ -2,8 +2,7 @@ const WebSocket = require('ws');
 const http = require('http');
 
 const PORT = process.env.PORT || 8080;
-// IMPORTANT: Use ws:// (not wss://) because your plugin has TLS disabled
-const BACKEND_URL = 'ws://z-x-25-x.hf.space';
+const BACKEND_URL = 'wss://z-x-25-x.hf.space';  // Your plugin supports wss
 
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -20,48 +19,96 @@ const server = http.createServer((req, res) => {
     `);
 });
 
-const wss = new WebSocket.Server({ server });
+// Match your plugin's WebSocket settings
+const wss = new WebSocket.Server({ 
+    server,
+    perMessageDeflate: {
+        zlibDeflateOptions: {
+            chunkSize: 16384,  // matches http_max_chunk_size
+            level: 6           // matches http_websocket_compression_level
+        },
+        zlibInflateOptions: {
+            chunkSize: 16384
+        },
+        clientNoContextTakeover: true,
+        serverNoContextTakeover: true,
+        clientMaxWindowBits: 15,
+        serverMaxWindowBits: 15,
+        concurrencyLimit: 10
+    },
+    maxPayload: 2097151  // matches http_websocket_max_frame_length
+});
 
 wss.on('connection', (clientWs, req) => {
     console.log(`[${new Date().toISOString()}] Client connected`);
     
-    // Connect to HF Space using ws:// (non-SSL) to match plugin config
-    const backendWs = new WebSocket(BACKEND_URL);
+    // Match plugin's keepalive interval (5 seconds = 5000ms)
+    clientWs.on('pong', () => {
+        // Heartbeat received - plugin sends pings every 5 seconds
+    });
     
-    // Forward client → backend
+    // Connect to backend with matching settings
+    const backendWs = new WebSocket(BACKEND_URL, {
+        perMessageDeflate: {
+            level: 6,
+            clientNoContextTakeover: true,
+            serverNoContextTakeover: true
+        },
+        handshakeTimeout: 30000,
+        maxPayload: 2097151
+    });
+    
+    // Handle keepalive pings from the plugin
+    const keepaliveInterval = setInterval(() => {
+        if (backendWs.readyState === WebSocket.OPEN) {
+            backendWs.ping();
+        }
+        if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.ping();
+        }
+    }, 5000); // Match plugin's keepalive interval
+    
+    // Forward messages with compression matching plugin
     clientWs.on('message', (data, isBinary) => {
         if (backendWs.readyState === WebSocket.OPEN) {
-            backendWs.send(data, { binary: isBinary });
+            backendWs.send(data, { binary: isBinary, compress: true });
         }
     });
     
-    // Forward backend → client
     backendWs.on('message', (data, isBinary) => {
         if (clientWs.readyState === WebSocket.OPEN) {
-            clientWs.send(data, { binary: isBinary });
+            clientWs.send(data, { binary: isBinary, compress: true });
         }
     });
     
     // Handle disconnections
-    clientWs.on('close', () => {
-        console.log(`[${new Date().toISOString()}] Client disconnected`);
+    clientWs.on('close', (code, reason) => {
+        console.log(`[${new Date().toISOString()}] Client disconnected: ${code}`);
+        clearInterval(keepaliveInterval);
         if (backendWs.readyState === WebSocket.OPEN) backendWs.close();
     });
     
-    backendWs.on('close', () => {
-        console.log(`[${new Date().toISOString()}] Backend disconnected`);
+    backendWs.on('close', (code, reason) => {
+        console.log(`[${new Date().toISOString()}] Backend disconnected: ${code}`);
+        clearInterval(keepaliveInterval);
         if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
     });
     
     backendWs.on('error', (err) => {
         console.log(`[${new Date().toISOString()}] Backend error: ${err.message}`);
     });
+    
+    backendWs.on('open', () => {
+        console.log(`[${new Date().toISOString()}] Connected to backend`);
+    });
 });
 
 server.listen(PORT, () => {
     console.log(`[${new Date().toISOString()}] ========================================`);
-    console.log(`[${new Date().toISOString()}] ✅ Proxy running on port ${PORT}`);
-    console.log(`[${new Date().toISOString()}] 🔗 Client connects via: wss://z-x.duckdns.org`);
-    console.log(`[${new Date().toISOString()}] 🔗 Backend connected via: ${BACKEND_URL}`);
+    console.log(`[${new Date().toISOString()}] ✅ Eaglercraft Proxy Running`);
+    console.log(`[${new Date().toISOString()}] 📡 Port: ${PORT}`);
+    console.log(`[${new Date().toISOString()}] 🔗 Backend: ${BACKEND_URL}`);
+    console.log(`[${new Date().toISOString()}] ⏱️  Keepalive interval: 5000ms`);
+    console.log(`[${new Date().toISOString()}] 🎮 Game: wss://z-x.duckdns.org`);
     console.log(`[${new Date().toISOString()}] ========================================`);
 });
