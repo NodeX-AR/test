@@ -1,9 +1,8 @@
 const WebSocket = require('ws');
 const http = require('http');
-const https = require('https');
 
 const PORT = process.env.PORT || 8080;
-const BACKEND_URL = 'https://z-x-25-x.hf.space';  // Use https://, ws library will upgrade
+const BACKEND_URL = 'wss://z-x-25-x.hf.space';
 
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -20,31 +19,40 @@ const server = http.createServer((req, res) => {
     `);
 });
 
-const wss = new WebSocket.Server({ server });
+// Disable all extra features to match Eaglercraft's raw binary requirements
+const wss = new WebSocket.Server({ 
+    server,
+    perMessageDeflate: false,
+    maxPayload: 50 * 1024 * 1024 // 50MB for world data
+});
 
 wss.on('connection', (clientWs, req) => {
     console.log(`[${new Date().toISOString()}] Client connected`);
     
-    // Use wss:// directly - no redirect needed
-    const backendWs = new WebSocket('wss://z-x-25-x.hf.space', {
+    // Force binary mode for both connections
+    clientWs.binaryType = 'nodebuffer';
+    
+    const backendWs = new WebSocket(BACKEND_URL, {
+        perMessageDeflate: false,
         handshakeTimeout: 10000,
-        rejectUnauthorized: false,  // Ignore SSL cert issues
-        followRedirects: true       // Follow redirects if any
+        rejectUnauthorized: false
     });
+    backendWs.binaryType = 'nodebuffer';
     
     backendWs.on('open', () => {
         console.log(`[${new Date().toISOString()}] ✅ Connected to backend`);
     });
     
+    // Raw binary forwarding - no modifications
     clientWs.on('message', (data, isBinary) => {
         if (backendWs.readyState === WebSocket.OPEN) {
-            backendWs.send(data, { binary: isBinary });
+            backendWs.send(data, { binary: true, compress: false });
         }
     });
     
     backendWs.on('message', (data, isBinary) => {
         if (clientWs.readyState === WebSocket.OPEN) {
-            clientWs.send(data, { binary: isBinary });
+            clientWs.send(data, { binary: true, compress: false });
         }
     });
     
@@ -65,8 +73,7 @@ wss.on('connection', (clientWs, req) => {
 
 server.listen(PORT, () => {
     console.log(`[${new Date().toISOString()}] ========================================`);
-    console.log(`[${new Date().toISOString()}] ✅ Proxy running on port ${PORT}`);
-    console.log(`[${new Date().toISOString()}] 🔗 Backend: wss://z-x-25-x.hf.space`);
+    console.log(`[${new Date().toISOString()}] ✅ Eaglercraft Proxy Running`);
     console.log(`[${new Date().toISOString()}] 🎮 Game: wss://z-x.duckdns.org`);
     console.log(`[${new Date().toISOString()}] ========================================`);
 });
