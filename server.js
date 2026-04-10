@@ -8,17 +8,16 @@ const crypto = require('crypto');
 const Jimp = require('jimp');
 
 // ============ CONFIGURATION ============
-const listenPort = process.env.PORT || 8080;  // Render uses dynamic port
-const mcHost = "z-x-25-x.hf.space";           // Your Hugging Face Space
-const mcPort = 443;                            // HTTPS/WSS port
+const listenPort = process.env.PORT || 8080;
+const backendUrl = "wss://z-x-25-x.hf.space";  // Full WebSocket URL
 const serverName = "Z&X Eaglercraft Server";
 const serverMotd = ["Welcome to Z&X", "Eaglercraft Server!"];
 const serverMaxPlayers = 20;
 const serverOnlinePlayers = 1;
 const serverPlayers = ["Join us at", "z-x.duckdns.org!"];
-const serverIcon = null;                       // Set to "icon.png" if you have a 64x64 icon
+const serverIcon = null;
 const timeout = 10000;
-const changeProtocol = true;
+const changeProtocol = false;  // IMPORTANT: Set to false for 1.12
 const removeSkin = true;
 const prefix = "www";
 // ======================================
@@ -97,7 +96,7 @@ wss.on('connection', function (ws) {
     });
 
     let client = null;
-    makeWsMcClient(ws, c => client = c);
+    makeBackendConnection(ws, (backend) => client = backend);
 
     let msgNum = 0;
 
@@ -110,10 +109,10 @@ wss.on('connection', function (ws) {
                 closeIt();
                 return;
             }
-            if (changeProtocol) data = bufferReplace(data, Buffer.from("0245", "hex"), Buffer.from("023d", "hex"));
+            // No protocol modification for 1.12
         } else if (msgNum == 1) {
             msgNum++;
-            if (removeSkin) return; // eaglercraft skin
+            if (removeSkin) return;
         }
         writeData(data);
     });
@@ -151,27 +150,60 @@ httpsrv.listen(listenPort, () => {
     console.log(`✅ Server running on port ${listenPort}`);
     console.log(`📄 Website available at port ${listenPort}`);
     console.log(`🔌 WebSocket endpoint: wss://z-x.duckdns.org`);
-    console.log(`🎮 Forwarding to: ${mcHost}:${mcPort}`);
+    console.log(`🎮 Forwarding to backend: ${backendUrl}`);
 });
 
-function makeWsMcClient(ws, cb) {
-    const client = new Net.Socket();
+function makeBackendConnection(ws, cb) {
+    // Connect to HF Space using WebSocket (correct method)
+    const targetWs = new WebSocket(backendUrl, {
+        handshakeTimeout: 30000,
+        perMessageDeflate: false,
+        headers: {
+            'User-Agent': 'Eaglercraft-Proxy'
+        }
+    });
     
-    client.connect({ port: mcPort, host: mcHost }, function () {
-        console.log(`✅ Connected to backend server at ${mcHost}:${mcPort}`);
-        cb(client);
+    let isReady = false;
+    
+    targetWs.on('open', function() {
+        console.log(`✅ Connected to HF Space via WebSocket`);
+        isReady = true;
+        
+        // Create a compatible interface
+        const backendAdapter = {
+            write: (data) => {
+                if (targetWs.readyState === WebSocket.OPEN) {
+                    targetWs.send(data);
+                }
+            },
+            end: () => {
+                if (targetWs.readyState === WebSocket.OPEN) {
+                    targetWs.close();
+                }
+            }
+        };
+        
+        // Add event emitter compatibility
+        backendAdapter.on = (event, handler) => {
+            if (event === 'data') {
+                targetWs.on('message', handler);
+            } else if (event === 'end' || event === 'close') {
+                targetWs.on('close', handler);
+            } else if (event === 'error') {
+                targetWs.on('error', handler);
+            }
+        };
+        
+        cb(backendAdapter);
     });
-
-    client.on('end', function () {
-        console.log("Backend connection ended");
-        if (ws.readyState == WebSocket.OPEN) ws.close();
+    
+    targetWs.on('error', function(err) {
+        console.log(`Failed to connect to HF Space: ${err.message}`);
+        if (ws.readyState === WebSocket.OPEN) ws.close();
     });
-
-    client.on('data', function (chunk) {
-        if (ws.readyState == WebSocket.OPEN) ws.send(chunk);
-    });
-
-    client.on('error', function (err) {
-        console.log(`Backend error: ${err.message}`);
+    
+    targetWs.on('close', function() {
+        console.log("HF Space WebSocket connection closed");
+        if (ws.readyState === WebSocket.OPEN) ws.close();
     });
 }
