@@ -1,8 +1,18 @@
 {
-  "dependencies": {
-    "buffer-replace": "^1.0.0",
-    "jimp": "^0.16.1",
-    "mime-types": "^2.1.35",
-    "ws": "^8.5.0"
-  }
+    "name": "ayunmultiport-eaglercraft",
+    "version": "1.0.0",
+    "description": "Eaglercraft WebSocket proxy for Hugging Face Spaces",
+    "main": "server.js",
+    "scripts": {
+        "start": "node server.js"
+    },
+    "dependencies": {
+        "ws": "^8.14.2",
+        "mime-types": "^2.1.35",
+        "buffer-replace": "^1.0.0",
+        "jimp": "^0.16.2"
+    },
+    "keywords": ["eaglercraft", "minecraft", "websocket", "proxy"],
+    "author": "Z&X Server",
+    "license": "MIT"
 }
